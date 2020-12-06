@@ -19,6 +19,7 @@ import warnings
 from collections import defaultdict
 from typing import Any, Dict, List, Tuple, Optional
 
+from .auth import Auth
 from .protocol import TPLinkSmartHomeProtocol
 
 _LOGGER = logging.getLogger(__name__)
