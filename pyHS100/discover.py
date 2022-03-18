@@ -24,6 +24,7 @@ class Discover:
         and waits for given timeout for answers from devices.
 
         :param protocol: Protocol implementation to use
+        :param target: The target broadcast address (e.g. 192.168.xxx.255).
         :param timeout: How long to wait for responses, defaults to 3
         :param port: port to send broadcast messages, defaults to 9999.
         :rtype: dict
@@ -31,8 +32,6 @@ class Discover:
         """
         if protocol is None:
             protocol = TPLinkSmartHomeProtocol()
-
-        target = "255.255.255.255"
 
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
@@ -46,8 +45,10 @@ class Discover:
         anonymous = Auth()
 
         encrypted_req = protocol.encrypt(req)
+
         sock.sendto(encrypted_req[4:], (target, port))
         sock.sendto(new_req, (target, 20002))
+
         devices = {}
         _LOGGER.debug("Waiting %s seconds for responses...", timeout)
 
@@ -88,15 +89,14 @@ class Discover:
             _LOGGER.debug("Got socket timeout, which is okay.")
         except Exception as ex:
             _LOGGER.error("Got exception %s", ex, exc_info=True)
+        _LOGGER.debug("Found %s devices: %s", len(devices), devices)
         return devices
 
     @staticmethod
-    def discover_single(host: str,
-                        protocol: TPLinkSmartHomeProtocol = None
-                        ) -> SmartDevice:
-        """
-        Similar to discover(), except only return device object for a single
-        host.
+    def discover_single(
+        host: str, protocol: TPLinkSmartHomeProtocol = None
+    ) -> Optional[SmartDevice]:
+        """Discover a single device by the given IP address.
 
         :param host: Hostname of device to query
         :param protocol: Protocol implementation to use
@@ -111,29 +111,28 @@ class Discover:
         device_class = Discover._get_device_class(info)
         if device_class is not None:
             return device_class(host)
-        else:
-            return None
+
+        return None
 
     @staticmethod
-    def _get_device_class(info: dict) -> Type[SmartDevice]:
+    def _get_device_class(info: dict) -> Optional[Type[SmartDevice]]:
         """Find SmartDevice subclass for device described by passed data."""
         if "system" in info and "get_sysinfo" in info["system"]:
             sysinfo = info["system"]["get_sysinfo"]
             if "type" in sysinfo:
-                type = sysinfo["type"]
+                type_ = sysinfo["type"]
             elif "mic_type" in sysinfo:
-                type = sysinfo["mic_type"]
+                type_ = sysinfo["mic_type"]
             else:
-                _LOGGER.error("Unable to find the device type field!")
-                type = "UNKNOWN"
+                raise SmartDeviceException("Unable to find the device type field!")
         else:
-            _LOGGER.error("No 'system' nor 'get_sysinfo' in response")
+            raise SmartDeviceException("No 'system' nor 'get_sysinfo' in response")
 
-        if "smartplug" in type.lower() and "children" in sysinfo:
+        if "smartplug" in type_.lower() and "children" in sysinfo:
             return SmartStrip
-        elif "smartplug" in type.lower():
+        elif "smartplug" in type_.lower():
             return SmartPlug
-        elif "smartbulb" in type.lower():
+        elif "smartbulb" in type_.lower():
             return SmartBulb
 
         return None
