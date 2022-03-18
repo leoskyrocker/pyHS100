@@ -1,55 +1,23 @@
 import socket
 import logging
 import json
-from typing import Dict, Type, Optional
+from typing import Dict, Optional, Type
 
-from pyHS100 import (
-    TPLinkSmartHomeProtocol,
-    SmartDevice,
-    SmartPlug,
-    SmartBulb,
-    SmartStrip,
-    SmartDeviceException,
-)
+from pyHS100 import (TPLinkSmartHomeProtocol, TPLinkKLAP, SmartDevice, SmartPlug,
+                     SmartBulb, SmartStrip)
+from .auth import Auth
 
 _LOGGER = logging.getLogger(__name__)
 
 
 class Discover:
-    """Discover TPLink Smart Home devices.
-
-    The main entry point for this library is Discover.discover(),
-    which returns a dictionary of the found devices. The key is the IP address
-    of the device and the value contains ready-to-use, SmartDevice-derived
-    device object.
-
-    discover_single() can be used to initialize a single device given its
-    IP address. If the type of the device and its IP address is already known,
-    you can initialize the corresponding device class directly without this.
-
-    The protocol uses UDP broadcast datagrams on port 9999 for discovery.
-
-
-    """
-
-    DISCOVERY_QUERY = {
-        "system": {"get_sysinfo": None},
-        "emeter": {"get_realtime": None},
-        "smartlife.iot.dimmer": {"get_dimmer_parameters": None},
-        "smartlife.iot.common.emeter": {"get_realtime": None},
-        "smartlife.iot.smartbulb.lightingservice": {"get_light_state": None},
-    }
+    DISCOVERY_QUERY = {"system": {"get_sysinfo": None}}
 
     @staticmethod
-    def discover(
-        protocol: TPLinkSmartHomeProtocol = None,
-        target: str = "255.255.255.255",
-        port: int = 9999,
-        timeout: int = 3,
-        discovery_packets=3,
-        return_raw=False,
-    ) -> Dict[str, SmartDevice]:
-
+    def discover(protocol: TPLinkSmartHomeProtocol = None,
+                 port: int = 9999,
+                 timeout: int = 3,
+                 authentication: Optional[Auth] = None) -> Dict[str, SmartDevice]:
         """
         Sends discovery message to 255.255.255.255:9999 in order
         to detect available supported devices in the local network,
@@ -73,9 +41,13 @@ class Discover:
         req = json.dumps(Discover.DISCOVERY_QUERY)
         _LOGGER.debug("Sending discovery to %s:%s", target, port)
 
+        new_req = bytes.fromhex("020000010000000000000000463cb5d3")
+        anonymous = Auth()
+
         encrypted_req = protocol.encrypt(req)
-        for i in range(discovery_packets):
-            sock.sendto(encrypted_req[4:], (target, port))
+
+        sock.sendto(encrypted_req[4:], (target, port))
+        sock.sendto(new_req, (target, 20002))
 
         devices = {}
         _LOGGER.debug("Waiting %s seconds for responses...", timeout)
@@ -83,13 +55,36 @@ class Discover:
         try:
             while True:
                 data, addr = sock.recvfrom(4096)
-                ip, port = addr
-                info = json.loads(protocol.decrypt(data))
-                device_class = Discover._get_device_class(info)
-                if return_raw:
-                    devices[ip] = info
-                elif device_class is not None:
-                    devices[ip] = device_class(ip)
+                recv_ip, recv_port = addr
+                if recv_port == port:
+                    info = json.loads(protocol.decrypt(data))
+                    device_class = Discover._get_device_class(info)
+                    if device_class is not None:
+                        devices[recv_ip] = device_class(recv_ip)
+                else:
+                    info = json.loads(data[16:])
+                    device_type = info["result"]["device_type"]
+                    if device_type == "IOT.SMARTPLUGSWITCH":
+                    	device_class = SmartPlug
+                    else:
+                    	_LOGGER.error(f"Unknown device type {device_type}")
+                    	device_class = None
+
+                    owner = info["result"]["owner"]
+                    if owner is not None:
+                    	owner_bin = bytes.fromhex(owner)
+
+                    if owner is None or owner == "" or owner_bin == anonymous.owner:
+                    	device_auth = anonymous
+                    elif authentication is not None and owner_bin == authentication.owner:
+                        device_auth = authentication
+                    else:
+                    	_LOGGER.error(f"Device {recv_ip} has unknown owner {owner}")
+                    	device_auth = None
+
+                    if device_class is not None and device_auth is not None:
+                        devices[recv_ip] = device_class(recv_ip, protocol=TPLinkKLAP(recv_ip, device_auth))
+
         except socket.timeout:
             _LOGGER.debug("Got socket timeout, which is okay.")
         except Exception as ex:

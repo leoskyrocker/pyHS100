@@ -19,4 +19,6 @@ from .smartplug import SmartPlug
 from .smartbulb import SmartBulb
 from .smartstrip import SmartStrip, SmartStripException
 from .protocol import TPLinkSmartHomeProtocol
+from .klapprotocol import TPLinkKLAP
 from .discover import Discover
+from .auth import Auth

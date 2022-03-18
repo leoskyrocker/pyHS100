@@ -21,6 +21,7 @@ from enum import Enum
 
 from deprecation import deprecated
 
+from .auth import Auth
 from .protocol import TPLinkSmartHomeProtocol
 
 _LOGGER = logging.getLogger(__name__)
